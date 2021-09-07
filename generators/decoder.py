@@ -16,6 +16,7 @@ class Decoder(nn.Module):
         else:
             raise NotImplementedError
 
+        self.sigmoid = nn.Sigmoid()
         self.conv1 = nn.Conv2d(low_level_inplanes, 48, 1, bias=False)
         self.bn1 = BatchNorm(48)
         self.relu = nn.ReLU()

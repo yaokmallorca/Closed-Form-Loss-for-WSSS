@@ -11,12 +11,15 @@ from PIL import Image, ImageOps, ImageFilter
     'mean': np.array([0.45942432, 0.43057796, 0.32076004],float),
     'std': np.array([0.14271824, 0.13926049, 0.11461112],float)
 }
+subvoc
+JPEGImages : normMean = [0.4517059  0.43470722 0.40886918]
+JPEGImages : normstdevs = [0.23672307 0.23163801 0.2359839 ]
 """
 
 stats = {
     'voc': {
-        'mean': np.array([0.485,0.456,0.406],float),
-        'std': np.array([0.229,0.224,0.225],float)
+        'mean': np.array([0.4517059,0.43470722,0.40886918],float),
+        'std': np.array([0.23672307,0.23163801,0.2359839],float)
     }, 
     'corrosion': {
         'mean': np.array([0.4855246,  0.45945138, 0.3439404],float),
@@ -88,7 +91,7 @@ class NormalizeOwn(object):
     """
         Normalize the dataset to zero mean and unit standard deviation.
     """
-    def __init__(self,dataset='bio'): # corrosion !!!!!!!!!!!!
+    def __init__(self,dataset='voc'): # corrosion !!!!!!!!!!!!
         self.dataset = dataset
 
     def __call__(self,img):
@@ -421,6 +424,33 @@ class ResizedImage3(object):
         label_scale = transforms.Scale(self.size,interpolation=self.label_interpolation)
         elabel_scale = transforms.Scale(self.size,interpolation=self.label_interpolation)
         # crop = transforms.CenterCrop(self.size)
+        return img_scale(img), label_scale(label), elabel_scale(elabel)
+
+class ResizedImageTrimap(object):
+    """
+        RandomSizedCrop for both the image and the label  
+    """
+    def __init__(self,size,img_interpolation=Image.BILINEAR,label_interpolation=Image.NEAREST):
+        self.size = size
+        self.img_interpolation = img_interpolation
+        self.label_interpolation = label_interpolation
+
+    """
+        Apply the random resized crop to both (img,label)
+        Expects img,label to be PIL.Image objects
+    """
+    def __call__(self,data):
+        img = data[0]
+        label = data[1]
+        elabel = data[2]
+        n_classes = label[0].shape[0]
+
+        #Add a fallback method
+        img_scale = transforms.Scale(self.size,interpolation=self.img_interpolation)
+        label_scale = transforms.Scale(self.size,interpolation=self.label_interpolation)
+        elabel_scale = transforms.Scale(self.size,interpolation=self.label_interpolation)
+        # crop = transforms.CenterCrop(self.size)
+
         return img_scale(img), label_scale(label), elabel_scale(elabel)
 
 class ResizedImage4(object):

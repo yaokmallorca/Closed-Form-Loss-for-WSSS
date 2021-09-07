@@ -76,7 +76,7 @@ def parse_args():
     parser.add_argument("--nogpu",action='store_true',
                         help="Train only on cpus. Helpful for debugging")
 
-    parser.add_argument("--max_epoch",default=800,type=int,
+    parser.add_argument("--max_epoch",default=150,type=int,
                         help="Maximum iterations.")
 
     parser.add_argument("--start_epoch",default=0,type=int,
@@ -232,7 +232,7 @@ def mse_loss(input, target, ignored_index=128, reduction='mean'):
 
 def train_close(generator,steps,optimG,trainloader,valoader,args):
     nt = datetime.datetime.now()
-    log_name = "CORROSION_XCEP_CLOSE_LOG[INFO]_{}_{}_{}_{}_{}_{}.log".format(nt.year,nt.month,nt.day,nt.hour,nt.minute,nt.second)
+    log_name = "CORROSION_RES101_CLOSE_LOG[INFO]_{}_{}_{}_{}_{}_{}.log".format(nt.year,nt.month,nt.day,nt.hour,nt.minute,nt.second)
     log_f = open(log_name, "a") 
     reg = False
     closed_form_loss = ClosedFormLoss(reg, trimap_confidence=100)
@@ -283,50 +283,6 @@ def train_close(generator,steps,optimG,trainloader,valoader,args):
             torch.save(snapshot,os.path.join(args.snapshot_dir,'{}_{}_closedform.pth.tar'.format(args.prefix, epoch)))
     log_f.close()
 
-
-def train_dice(generator,steps,optimG,trainloader,valoader,args):
-    nt = datetime.datetime.now()
-    log_name = "BIO_DICE_LOG[INFO]_{}_{}_{}_{}_{}_{}.log".format(nt.year,nt.month,nt.day,nt.hour,nt.minute,nt.second)
-    log_f = open(log_name, "a") 
-    dice_loss = DiceLoss()
-
-    for epoch in range(args.start_epoch,args.max_epoch+1):
-        generator.train()
-        #  (img, mask, cmask, _, _, img_org)
-        # for batch_id, (img, mask, cmask, _, emask, img_names) in enumerate(trainloader):
-        for batch_id, (img, alpha_ch1, alpha_ch2, img_names) in enumerate(trainloader):
-            if args.nogpu:
-                img, alpha_ch1, alpha_ch2 = Variable(img), Variable(alpha_ch1), Variable(alpha_ch2)
-            else:
-                img, alpha_ch1, alpha_ch2 = Variable(img.cuda()), Variable(alpha_ch1.cuda()), Variable(alpha_ch2.cuda())
-            alpha_ch1 = alpha_ch1.float().unsqueeze(1) / 255.
-            alpha_ch2 = alpha_ch2.float().unsqueeze(1) / 255.
-            gts = torch.cat((alpha_ch1, alpha_ch2), dim=1)
-
-            itr = len(trainloader)*(epoch) + batch_id
-            # print(img.size(), trimaps.size(), img_org.size())
-            cpmap = generator(img)
-            loss = dice_loss(cpmap, gts)
-            for param_group in optimG.param_groups:
-                curr_lr = param_group['lr']
-            optimG = poly_lr_step_scheduler(optimG, curr_lr, itr,steps)
-            optimG.zero_grad()
-            loss.backward()
-            optimG.step()
-
-            log_str = "[{}][{}][{:.1E}]Loss: {:0.8f}".format(epoch,itr,curr_lr,loss.data)
-            # log_str = "[{}][{}][{:.1E}]Loss: {:0.8f}, {:0.8f}, {:0.8f}".\
-            #     format(epoch,itr,curr_lr,loss.data,closeloss.data,scrloss.data)
-            print(log_str)
-            log_f.write(log_str+'\n')
-        # save snapshot
-        snapshot = {
-            'state_dict': generator.state_dict(),
-            'epoch': epoch,
-        }
-        if epoch > 300:
-            torch.save(snapshot,os.path.join(args.snapshot_dir,'{}_{}_dice.pth.tar'.format(args.prefix, epoch)))
-    log_f.close()
 
 
 def main():
@@ -395,7 +351,7 @@ def main():
     # generator = deeplabv2.ResDeeplab(Reconstruct=True)
 
     # softmax generator: in_chs=3, out_chs=2
-    generator = deeplab.ResDeeplab(backbone='xception', num_classes=1)
+    generator = deeplab.ResDeeplab(backbone='resnet', num_classes=1)
     # generator = fcn8s.FCN8s_softAtOnce()
 
     if osp.isfile(args.snapshot):
@@ -408,13 +364,8 @@ def main():
     # else:
     #     init_weights(generator,args.init_net)
 
-    if args.init_net != 'unet':
-        optimG = optim.SGD(filter(lambda p: p.requires_grad, \
-            generator.parameters()),lr=args.g_lr,momentum=0.9,\
-            weight_decay=0.0001,nesterov=True)
-    else:
-        optimG = optim.Adam(filter(lambda p: p.requires_grad, \
-            generator.parameters()),args.g_lr, [0.5, 0.999])
+    optimG = optim.Adam(filter(lambda p: p.requires_grad, \
+        generator.parameters()),args.g_lr, [0.9, 0.999])
 
     if not args.nogpu:
         generator = nn.DataParallel(generator).cuda()

@@ -2,8 +2,9 @@
 from datasets.biofouling import Biofouling
 from torch.utils.data import DataLoader
 # import generators.unet as unet
-import generators.deeplabv3 as deeplab
+# import generators.deeplabv3 as deeplab
 # import generators.encoder as encoder
+import generators.erfnet as erfnet
 
 import torch
 import torch.nn as nn
@@ -126,8 +127,6 @@ def addTransparency(img, img_blender, factor = 0.3 ):
     img = Image.blend(img_blender, img, factor)
     return img
 
-
-
 def evaluate_generator(Features = False):
     home_dir = os.path.dirname(os.path.realpath(__file__))
 
@@ -147,7 +146,7 @@ def evaluate_generator(Features = False):
         if args.norm:
             img_transform = transforms.Compose([ToTensor(),NormalizeOwn(dataset='bio')])
         label_transform = transforms.Compose([IgnoreLabelClass(),ToTensorLabel()])
-        co_transform = transforms.Compose([ResizedImage3((513,513))])
+        co_transform = transforms.Compose([ResizedImage3((512,256))])
 
         testset = Biofouling(home_dir, args.dataset_dir,img_transform=img_transform, \
             label_transform = label_transform,co_transform=co_transform,train_phase=False)
@@ -163,9 +162,10 @@ def evaluate_generator(Features = False):
         testloader = DataLoader(testset, batch_size=1)
 
     # generator = encoder.resnet101()
-    generator = deeplab.ResDeeplab(backbone='mobilenet', num_classes=1)
+    # generator = deeplab.ResDeeplab(num_classes=1)
     # generatro = fcn.FCN8s_soft()
     # generator = unet.AttU_Net(output_ch=3, Reconstruct=False,Aspp=False, Centroids=Centroids, RGB=RGB)
+    generator = erfnet.ERFNet(num_classes=1)
     print(args.snapshot)
     assert(os.path.isfile(args.snapshot))
     snapshot = torch.load(args.snapshot)
@@ -196,7 +196,8 @@ def evaluate_generator(Features = False):
     # TODO: Crop out the padding before prediction
     for img_id, (img, trimap, img_org, name) in enumerate(testloader):
         print(name)
-        filename = os.path.join('results/closed_form/test/bio_mobilenet', '{}.png'.format(name[0]))
+        # /home/yaok/software/closed-form-segmentation/
+        filename = os.path.join('results/closed_form/test/bio_erf', '{}.png'.format(name[0]))
         activation = {}
         print("Generating Predictions for Image {}".format(name[0]))
 
@@ -207,9 +208,9 @@ def evaluate_generator(Features = False):
         # img.cpu().numpy()[0]
         img_path = osp.join(IMG_DIR, name[0]+'.png')
         # img_pil = Image.open(img_path)
-        # img_pil = img_pil.resize((513,513), Image.ANTIALIAS)
+        # img_pil = img_pil.resize((512,512), Image.ANTIALIAS)
         img_array = cv2.imread(img_path)
-        img_array = cv2.resize(img_array, (513,513), interpolation = cv2.INTER_AREA) 
+        img_array = cv2.resize(img_array, (512,512), interpolation = cv2.INTER_AREA) 
         img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
 
         # generator.Up_conv4.register_forward_hook(get_activation('Up_conv4', activation)) # Up_conv2
@@ -218,16 +219,17 @@ def evaluate_generator(Features = False):
         out_pred_map = generator(img)
         print(out_pred_map.size())
         solution = out_pred_map[0][0].detach().cpu().numpy().reshape(-1, 1)
+        solution = solution.reshape(512,256)
 
-        solution = solution.reshape(513,513)
+        solution = cv2.resize(solution, (512, 512), interpolation = cv2.INTER_CUBIC)
         sns.heatmap(solution, yticklabels=False, xticklabels=False)
-        plt.savefig("hm_bio_mobilenet.png")
+        plt.savefig("hm_bio_erf.png")
         input('s')
-
 
         # print(out_pred_map.max(), out_pred_map.min())
         # out_pred_np = out_pred_map[0].detach().cpu().numpy()
         alpha = np.minimum(np.maximum(solution, 0), 1)
+        alpha = cv2.resize(alpha, (512, 512), interpolation = cv2.INTER_CUBIC)
         # alpha = (out_pred_np - out_pred_np.min()) / (out_pred_np.max() - out_pred_np.min()) 
         # print(alpha.shape, np.unique(alpha))
         cv2.imwrite(filename[0:-4]+"_alpha.png", alpha*255)
@@ -235,10 +237,12 @@ def evaluate_generator(Features = False):
         output = (alpha * 255.0).astype(np.uint8)
         # output_pil = Image.fromarray(output)
         b_channel, g_channel, r_channel = cv2.split(img_array)
+        print(b_channel.shape, g_channel.shape, r_channel.shape, output.shape)
         img_BGRA = cv2.merge((r_channel, g_channel, b_channel, output))
         # output = addTransparency(img_pil, output_pil)
         # img_pil.putalpha(output)
         # img_pil.save(filename)
+        print(filename)
         cv2.imwrite(filename, img_BGRA)
         print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         # input('s')

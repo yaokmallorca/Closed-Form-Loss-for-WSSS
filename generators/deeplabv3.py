@@ -25,11 +25,15 @@ class ResDeeplab(nn.Module):
         self.freeze_bn = freeze_bn
 
     def forward(self, input):
+        # print("input: ", input.size())
         x, low_level_feat = self.backbone(input)
+        # print("backbone out: ", x.size())
         x = self.aspp(x)
+        # print("aspp out: ", x.size())
         x = self.decoder(x, low_level_feat)
+        # print("decoder out: ", x.size())
         x = F.interpolate(x, size=input.size()[2:], mode='bilinear', align_corners=True)
-
+        # print("final out: ", x.size())
         return x
 
     def freeze_bn(self):

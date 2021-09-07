@@ -187,7 +187,7 @@ def evaluate_generator(Features = False):
         testloader = DataLoader(testset, batch_size=1)
 
     # generator = encoder.resnet101()
-    generator = deeplab.ResDeeplab(num_classes=1)
+    generator = deeplab.ResDeeplab(backbone='xception', num_classes=1)
     # generatro = fcn.FCN8s_soft()
     # generator = unet.AttU_Net(output_ch=3, Reconstruct=False,Aspp=False, Centroids=Centroids, RGB=RGB)
     print(args.snapshot)
@@ -216,10 +216,11 @@ def evaluate_generator(Features = False):
     palette[1] = np.array([0, 0, 128])
     # print(palette)
     IMG_DIR = osp.join(args.dataset_dir, 'corrosion/JPEGImages')
+    # IMG_DIR = osp.join(args.dataset_dir, 'corrosion/test_img')
     # TODO: Crop out the padding before prediction
     for img_id, (img, trimap, img_org, name) in enumerate(testloader):
         print(name)
-        filename = os.path.join('results/closed_form/corrosion', '{}.jpg'.format(name[0]))
+        filename = os.path.join('results/closed_form/test/corrosion_mobilenet', '{}.png'.format(name[0]))
         activation = {}
         print("Generating Predictions for Image {}".format(name[0]))
 
@@ -239,9 +240,13 @@ def evaluate_generator(Features = False):
         print(out_pred_map.size())
         solution = out_pred_map[0][0].detach().cpu().numpy().reshape(-1, 1)
         solution = solution.reshape(513,513)
-        sns.heatmap(solution)
-        plt.show()
+
+        # plt.rcParams["figure.figsize"] = [300, 300]
+        sns.heatmap(solution, yticklabels=False, xticklabels=False)
+        plt.savefig("corrosion_xception.png")
         input('s')
+
+
         # print(out_pred_map.max(), out_pred_map.min())
         # out_pred_np = out_pred_map[0].detach().cpu().numpy()
         alpha = np.minimum(np.maximum(solution, 0), 1)

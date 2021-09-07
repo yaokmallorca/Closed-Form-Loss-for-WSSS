@@ -1,9 +1,10 @@
 # from datasets.corrosion import Corrosion
-from datasets.biofouling import Biofouling
+from datasets.cityscape import CityScape
 from torch.utils.data import DataLoader
 # import generators.unet as unet
-import generators.deeplabv3 as deeplab
+# import generators.deeplabv3 as deeplab
 # import generators.encoder as encoder
+import generators.erfnet as erfnet
 
 import torch
 import torch.nn as nn
@@ -15,6 +16,7 @@ import numpy as np
 # from utils.metrics import scores
 import torchvision.transforms as transforms
 from utils.transforms import ResizedImage3, IgnoreLabelClass, ToTensorLabel, NormalizeOwn, ZeroPadding
+from utils.metrics import scores
 from torchvision.transforms import ToTensor
 import cv2
 from PIL import Image
@@ -126,7 +128,11 @@ def addTransparency(img, img_blender, factor = 0.3 ):
     img = Image.blend(img_blender, img, factor)
     return img
 
-
+"""
+overall miou:  0.7459056023217526
+overall class miou:  [0.90847889 0.6136272  0.29012716 0.60662176 0.64203647 0.7250848
+ 0.80822231]
+"""
 
 def evaluate_generator(Features = False):
     home_dir = os.path.dirname(os.path.realpath(__file__))
@@ -141,31 +147,36 @@ def evaluate_generator(Features = False):
                         action='store_true')
     args = parser.parse_args()
 
+    # sub_classes = ('plane', 'bike', 'person', 'car', 'dog', 'cat', 'background')
+    sub_classes = ('road', 'sidewalk', 'construction', 'sign', 'plant', 
+                   'sky', 'person', 'car', 'bicycle', 'background')
+
     # print(args.val_orig, args.norm)
     if args.val_orig:
         img_transform = transforms.Compose([ToTensor()])
         if args.norm:
-            img_transform = transforms.Compose([ToTensor(),NormalizeOwn(dataset='bio')])
-        label_transform = transforms.Compose([IgnoreLabelClass(),ToTensorLabel()])
-        co_transform = transforms.Compose([ResizedImage3((513,513))])
+            img_transform = transforms.Compose([ToTensor(),NormalizeOwn(dataset='cityscape')])
+        label_transform = transforms.Compose([ToTensorLabel()]) # IgnoreLabelClass(),
+        co_transform = transforms.Compose([ResizedImage3((160,320))])
 
-        testset = Biofouling(home_dir, args.dataset_dir,img_transform=img_transform, \
+        testset = CityScape(home_dir, args.dataset_dir, n_classes=9, img_transform=img_transform, \
             label_transform = label_transform,co_transform=co_transform,train_phase=False)
         testloader = DataLoader(testset, batch_size=1)
     else:
         img_transform = transforms.Compose([ZeroPadding(),ToTensor()])
         if args.norm:
-            img_transform = img_transform = transforms.Compose([ZeroPadding(),ToTensor(),NormalizeOwn(dataset='bio')])
-        label_transform = transforms.Compose([IgnoreLabelClass(),ToTensorLabel()])
+            img_transform = img_transform = transforms.Compose([ZeroPadding(),ToTensor(),NormalizeOwn(dataset='cityscape')])
+        label_transform = transforms.Compose([ToTensorLabel()]) # IgnoreLabelClass(),
 
-        testset = Biofouling(home_dir,args.dataset_dir,img_transform=img_transform, \
+        testset = CityScape(home_dir, args.dataset_dir, n_classes=9,img_transform=img_transform, \
             label_transform=label_transform,train_phase=False)
         testloader = DataLoader(testset, batch_size=1)
 
     # generator = encoder.resnet101()
-    generator = deeplab.ResDeeplab(backbone='mobilenet', num_classes=1)
+    # generator = deeplab.ResDeeplab(backbone='resnet', num_classes=6, has_clf=True)
     # generatro = fcn.FCN8s_soft()
     # generator = unet.AttU_Net(output_ch=3, Reconstruct=False,Aspp=False, Centroids=Centroids, RGB=RGB)
+    generator = erfnet.ERFNet(num_classes=9)
     print(args.snapshot)
     assert(os.path.isfile(args.snapshot))
     snapshot = torch.load(args.snapshot)
@@ -179,7 +190,7 @@ def evaluate_generator(Features = False):
     generator.eval().cuda()
     # generator = nn.DataParallel(generator).cuda()
     print('Generator Loaded')
-    n_classes = 3
+    n_classes = 10
     crf = False
     gts, preds, clustering, gtc = [], [], [], []
     acc_seg, rec_seg, prec_seg = [], [], []
@@ -189,60 +200,92 @@ def evaluate_generator(Features = False):
     print('Prediction Goint to Start')
     colorize = VOCColorize()
     palette = make_palette(n_classes)
-    palette[1] = np.array([64, 64, 128])
-    # print(palette)
-    IMG_DIR = osp.join(args.dataset_dir, 'BioFouling/JPEGImages')
+    palette[-2][-1] = 128
+    palette[-2][1] = 255
+    # palette[0] = np.array([64, 64, 128])
+    IMG_DIR = osp.join(args.dataset_dir, 'subset/JPEGImages')
     # IMG_DIR = osp.join(args.dataset_dir, 'BioFouling/test_img')
     # TODO: Crop out the padding before prediction
-    for img_id, (img, trimap, img_org, name) in enumerate(testloader):
-        print(name)
-        filename = os.path.join('results/closed_form/test/bio_mobilenet', '{}.png'.format(name[0]))
+    miou_val, cls_iu_val = [], []
+
+
+    for img_id, (img, img_org, elabel, name) in enumerate(testloader):
+        # print(img.size(), img_org.size(), elabel.size())
+        matting_name = os.path.join('results/closed_form/cityscape_debug/matting', '{}.png'.format(name[0]))
+        filename = os.path.join('results/closed_form/cityscape_debug', '{}.png'.format(name[0]))
         activation = {}
         print("Generating Predictions for Image {}".format(name[0]))
-
-        # sp_array = parse_json_superpixel(name[0])
+        gt_mask = elabel.numpy()[0]
 
         img = Variable(img.cuda())
-        print(img.size())
+        # print(img.size())
         # img.cpu().numpy()[0]
         img_path = osp.join(IMG_DIR, name[0]+'.png')
         # img_pil = Image.open(img_path)
         # img_pil = img_pil.resize((513,513), Image.ANTIALIAS)
         img_array = cv2.imread(img_path)
-        img_array = cv2.resize(img_array, (513,513), interpolation = cv2.INTER_AREA) 
+        # simg_array = cv2.resize(img_array, (320,160), interpolation = cv2.INTER_AREA) 
         img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
 
         # generator.Up_conv4.register_forward_hook(get_activation('Up_conv4', activation)) # Up_conv2
         # generator.Up_conv3.register_forward_hook(get_activation('Up_conv3', activation)) 
         # generator.Up_conv2.register_forward_hook(get_activation('Up_conv2', activation))
-        out_pred_map = generator(img)
-        print(out_pred_map.size())
-        solution = out_pred_map[0][0].detach().cpu().numpy().reshape(-1, 1)
-
-        solution = solution.reshape(513,513)
-        sns.heatmap(solution, yticklabels=False, xticklabels=False)
-        plt.savefig("hm_bio_mobilenet.png")
-        input('s')
-
-
-        # print(out_pred_map.max(), out_pred_map.min())
-        # out_pred_np = out_pred_map[0].detach().cpu().numpy()
-        alpha = np.minimum(np.maximum(solution, 0), 1)
-        # alpha = (out_pred_np - out_pred_np.min()) / (out_pred_np.max() - out_pred_np.min()) 
-        # print(alpha.shape, np.unique(alpha))
-        cv2.imwrite(filename[0:-4]+"_alpha.png", alpha*255)
-        alpha = 1 - alpha
-        output = (alpha * 255.0).astype(np.uint8)
-        # output_pil = Image.fromarray(output)
-        b_channel, g_channel, r_channel = cv2.split(img_array)
-        img_BGRA = cv2.merge((r_channel, g_channel, b_channel, output))
-        # output = addTransparency(img_pil, output_pil)
-        # img_pil.putalpha(output)
-        # img_pil.save(filename)
-        cv2.imwrite(filename, img_BGRA)
-        print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+        out_pred_map, clf_preds = generator(img,has_clf=True)
+        # print(clf_preds)
+        alphas = np.zeros((n_classes+1, 512, 1024))
+        # n_classes = out_pred_map.size()[1]
+        for c in range(n_classes-1):
+            if clf_preds[0][c] >= 0.5:
+                # print(out_pred_map.size())
+                print("class {}: ".format(sub_classes[c]), clf_preds[0][c])
+                solution = out_pred_map[0][c].detach().cpu().numpy().reshape(-1, 1)
+                solution = solution.reshape(160,320)
+                alpha = np.minimum(np.maximum(solution, 0), 1)
+                alpha = cv2.resize(alpha, (1024, 512), interpolation = cv2.INTER_CUBIC)
+                seg = alpha.copy()
+                if c == 3 or c == 6 or c == 8:
+                    seg[alpha >0.1] = 1
+                    seg[alpha<=0.1] = 0
+                else:
+                    seg[alpha >0.5] = 1
+                    seg[alpha<=0.5] = 0
+                alphas[c+1] = seg
+                
+                cv2.imwrite(matting_name[0:-4]+"_alpha_{}.png".format(sub_classes[c]), alpha*255)
+                alpha = 1 - alpha
+                output = (alpha * 255.0).astype(np.uint8)
+                b_channel, g_channel, r_channel = cv2.split(img_array)
+                # print(b_channel.shape, g_channel.shape, r_channel.shape, output.shape)
+                img_BGRA = cv2.merge((r_channel, g_channel, b_channel, output))
+                cv2.imwrite(matting_name[0:-4] + "_{}.png".format(sub_classes[c]), img_BGRA)
+        pred_hard = np.argmax(alphas,axis=0).astype(np.uint8)
+        # print(np.unique(pred_hard))
+        # for gt_, pred_ in zip(gt_mask, pred_hard):
+        #     gts.append(gt_)
+        #     preds.append(pred_) 
+        # print(gt_mask.shape, pred_hard.shape)
+        gt_mask = cv2.resize(gt_mask, (1024, 512), interpolation = cv2.INTER_NEAREST)
+        print(gt_mask.shape, np.unique(gt_mask))
+        miou, cls_iu, _ = scores(gt_mask, pred_hard, n_class = n_classes)
+        # print("miou: ", miou, ", cls_iu: ", cls_iu)
+        miou_val.append(miou)
+        cls_iu_val.append([cls_iu[1], cls_iu[2], cls_iu[3], cls_iu[4], cls_iu[5], cls_iu[6], cls_iu[7], cls_iu[8], cls_iu[9]])
+        masked_im = Image.fromarray(vis_seg(img_array, pred_hard, palette))
+        masked_im.save('{}.png'.format(filename[0:-4]))
+        print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         # input('s')
+    miou_val = np.array(miou_val)
+    cls_iu_val = np.array(cls_iu_val)
+    cls_iu_val = np.nan_to_num(cls_iu_val)
+    print("overall miou: ", miou_val.mean())
+    print("overall class miou: ", cls_iu_val.sum(axis=0)/np.count_nonzero(cls_iu_val, axis=0))
 
+"""
+overall miou:  0.47326014721945764
+overall class miou:  [0.75611321 0.49426177 0.68830708 0.27316143 0.68233702
+ 0.74271689 0.37231925 0.6760956  0.35036742]
+
+"""
 
 
 if __name__ == '__main__':

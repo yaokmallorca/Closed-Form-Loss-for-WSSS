@@ -8,8 +8,10 @@ import torch
 # from datasets.biofouling_full import Biofouling
 from datasets.biofouling import Biofouling
 # import generators.deeplabv2 as deeplab
-import generators.deeplabv3 as deeplab
+# import generators.deeplabv3 as deeplab
 # import generators.encoder as encoder
+# import generators.erfnet as erfnet
+import generators.unet as unet
 
 from torchvision import transforms
 from torchvision.transforms import ToTensor,Compose
@@ -76,7 +78,7 @@ def parse_args():
     parser.add_argument("--nogpu",action='store_true',
                         help="Train only on cpus. Helpful for debugging")
 
-    parser.add_argument("--max_epoch",default=150,type=int,
+    parser.add_argument("--max_epoch",default=500,type=int,
                         help="Maximum iterations.")
 
     parser.add_argument("--start_epoch",default=0,type=int,
@@ -88,7 +90,7 @@ def parse_args():
     parser.add_argument("--snapshot_dir",default=os.path.join(home_dir,'data','snapshots'),
                         help="Location to store the snapshot")
 
-    parser.add_argument("--batch_size",default=8,type=int, # 10
+    parser.add_argument("--batch_size",default=4,type=int, # 10
                         help="Batch size for training")
 
     parser.add_argument("--val_orig",action='store_true',
@@ -232,7 +234,7 @@ def mse_loss(input, target, ignored_index=128, reduction='mean'):
 
 def train_close(generator,steps,optimG,trainloader,valoader,args):
     nt = datetime.datetime.now()
-    log_name = "BIO_RES_CLOSE_LOG[INFO]_{}_{}_{}_{}_{}_{}.log".format(nt.year,nt.month,nt.day,nt.hour,nt.minute,nt.second)
+    log_name = "BIO_UNET_CLOSE_LOG[INFO]_{}_{}_{}_{}_{}_{}.log".format(nt.year,nt.month,nt.day,nt.hour,nt.minute,nt.second)
     log_f = open(log_name, "a") 
     reg = False
     closed_form_loss = ClosedFormLoss(reg, trimap_confidence=100)
@@ -279,7 +281,7 @@ def train_close(generator,steps,optimG,trainloader,valoader,args):
         }
         print(epoch, epoch%50)
         if epoch % 50 == 0:
-            torch.save(snapshot,os.path.join(args.snapshot_dir,'{}_{}_closedform.pth.tar'.format(args.prefix, epoch)))
+            torch.save(snapshot,os.path.join(args.snapshot_dir,'{}_unet_{}_closedform.pth.tar'.format(args.prefix, epoch)))
     log_f.close()
 
 
@@ -348,7 +350,7 @@ def main():
     # softmax
     labtr = [ToTensorLabel()] # IgnoreLabelClass(), ToFloatTensorLabel
     # cotr = [ResizedImage5((320,320))]
-    cotr = [ResizedImage3((513,513))] #    RandomSizedCrop3
+    cotr = [ResizedImage3((512,512))] #    RandomSizedCrop3
 
     print("dataset_dir: ", args.dataset_dir)
     trainset_l = Biofouling(home_dir,args.dataset_dir,img_transform=Compose(imgtr), 
@@ -382,7 +384,7 @@ def main():
         # softmax
         labtr = [ToTensorLabel()] #  ToFloatTensorLabel
         # cotr = [ResizedImage5((320,320))]
-        cotr = [ResizedImage3((513,513))]
+        cotr = [ResizedImage3((512,512))]
 
     valset = Biofouling(home_dir,args.dataset_dir,img_transform=Compose(imgtr), \
         label_transform = Compose(labtr),co_transform=Compose(cotr),train_phase=False)
@@ -394,21 +396,31 @@ def main():
     # generator = deeplabv2.ResDeeplab(Reconstruct=True)
 
     # softmax generator: in_chs=3, out_chs=2
-    generator = deeplab.ResDeeplab(backbone='resnet', num_classes=1)
+    # generator = deeplab.ResDeeplab(backbone='xception', num_classes=1)
     # generator = fcn8s.FCN8s_softAtOnce()
+    # generator = erfnet.ERFNet(num_classes=1)
+    generator = unet.U_Net()
 
     if osp.isfile(args.snapshot):
         print("load checkpoint => ", args.snapshot)
         checkpoint = torch.load(args.snapshot)
         generator_dict = generator.state_dict()
+        args.start_epoch = checkpoint['epoch']
+        # args.start_epoch = generator.epoch()
         saved_net = {k.partition('module.')[2]: v for i, (k,v) in enumerate(checkpoint['state_dict'].items()) if k.partition('module.')[2] in generator_dict}
         generator_dict.update(saved_net)
         generator.load_state_dict(saved_net)
     # else:
     #     init_weights(generator,args.init_net)
+    print("start_epoch: ", args.start_epoch)
 
-    optimG = optim.Adam(filter(lambda p: p.requires_grad, \
-        generator.parameters()),args.g_lr, [0.9, 0.999])
+    if args.init_net != 'unet':
+        optimG = optim.SGD(filter(lambda p: p.requires_grad, \
+            generator.parameters()),lr=args.g_lr,momentum=0.9,\
+            weight_decay=0.0001,nesterov=True)
+    else:
+        optimG = optim.Adam(filter(lambda p: p.requires_grad, \
+            generator.parameters()),args.g_lr, [0.9, 0.999])
 
     if not args.nogpu:
         generator = nn.DataParallel(generator).cuda()

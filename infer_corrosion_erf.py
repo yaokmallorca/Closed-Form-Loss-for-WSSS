@@ -1,9 +1,9 @@
-# from datasets.corrosion import Corrosion
-from datasets.biofouling import Biofouling
+from datasets.corrosion import Corrosion
+# from datasets.biofouling import Biofouling
 from torch.utils.data import DataLoader
 # import generators.unet as unet
-import generators.deeplabv3 as deeplab
-# import generators.encoder as encoder
+# import generators.deeplabv3 as deeplab
+import generators.erfnet as erfnet
 
 import torch
 import torch.nn as nn
@@ -126,6 +126,30 @@ def addTransparency(img, img_blender, factor = 0.3 ):
     img = Image.blend(img_blender, img, factor)
     return img
 
+def vis_seg(img, seg, palette, alpha):
+    """
+    Visualize segmentation as an overlay on the image.
+
+    Takes:
+        img: H x W x 3 image in [0, 255]
+        seg: H x W segmentation image of class IDs
+        palette: K x 3 colormap for all classes
+        alpha: opacity of the segmentation in [0, 1]
+    Gives:
+        H x W x 3 image with overlaid segmentation
+    """
+    vis = np.array(img, dtype=np.float32)
+    mask = seg > 0
+    print(vis.shape, mask.shape, alpha.shape)
+    # vis[mask] *= 1. - alpha
+    print(vis[mask].shape, alpha[mask].shape)
+    vis[mask][:,0] *= alpha[mask]
+    vis[mask][:,1] *= alpha[mask]
+    vis[mask][:,2] *= alpha[mask]
+    # vis[mask] += alpha * palette[seg[mask].flat]
+    vis[mask] += alpha[mask] * palette[1]
+    vis = vis.astype(np.uint8)
+    return vis
 
 
 def evaluate_generator(Features = False):
@@ -145,27 +169,28 @@ def evaluate_generator(Features = False):
     if args.val_orig:
         img_transform = transforms.Compose([ToTensor()])
         if args.norm:
-            img_transform = transforms.Compose([ToTensor(),NormalizeOwn(dataset='bio')])
+            img_transform = transforms.Compose([ToTensor(),NormalizeOwn(dataset='corrosion')])
         label_transform = transforms.Compose([IgnoreLabelClass(),ToTensorLabel()])
-        co_transform = transforms.Compose([ResizedImage3((513,513))])
+        co_transform = transforms.Compose([ResizedImage3((512,256))])
 
-        testset = Biofouling(home_dir, args.dataset_dir,img_transform=img_transform, \
+        testset = Corrosion(home_dir, args.dataset_dir,img_transform=img_transform, \
             label_transform = label_transform,co_transform=co_transform,train_phase=False)
         testloader = DataLoader(testset, batch_size=1)
     else:
         img_transform = transforms.Compose([ZeroPadding(),ToTensor()])
         if args.norm:
-            img_transform = img_transform = transforms.Compose([ZeroPadding(),ToTensor(),NormalizeOwn(dataset='bio')])
+            img_transform = img_transform = transforms.Compose([ZeroPadding(),ToTensor(),NormalizeOwn(dataset='corrosion')])
         label_transform = transforms.Compose([IgnoreLabelClass(),ToTensorLabel()])
 
-        testset = Biofouling(home_dir,args.dataset_dir,img_transform=img_transform, \
+        testset = Corrosion(home_dir,args.dataset_dir,img_transform=img_transform, \
             label_transform=label_transform,train_phase=False)
         testloader = DataLoader(testset, batch_size=1)
 
     # generator = encoder.resnet101()
-    generator = deeplab.ResDeeplab(backbone='mobilenet', num_classes=1)
+    # generator = deeplab.ResDeeplab(backbone='mobilenet', num_classes=1)
     # generatro = fcn.FCN8s_soft()
     # generator = unet.AttU_Net(output_ch=3, Reconstruct=False,Aspp=False, Centroids=Centroids, RGB=RGB)
+    generator = erfnet.ERFNet(num_classes=1)
     print(args.snapshot)
     assert(os.path.isfile(args.snapshot))
     snapshot = torch.load(args.snapshot)
@@ -189,14 +214,14 @@ def evaluate_generator(Features = False):
     print('Prediction Goint to Start')
     colorize = VOCColorize()
     palette = make_palette(n_classes)
-    palette[1] = np.array([64, 64, 128])
+    palette[1] = np.array([0, 0, 128])
     # print(palette)
-    IMG_DIR = osp.join(args.dataset_dir, 'BioFouling/JPEGImages')
-    # IMG_DIR = osp.join(args.dataset_dir, 'BioFouling/test_img')
+    # IMG_DIR = osp.join(args.dataset_dir, 'corrosion/JPEGImages')
+    IMG_DIR = osp.join(args.dataset_dir, 'corrosion/test_img')
     # TODO: Crop out the padding before prediction
     for img_id, (img, trimap, img_org, name) in enumerate(testloader):
         print(name)
-        filename = os.path.join('results/closed_form/test/bio_mobilenet', '{}.png'.format(name[0]))
+        filename = os.path.join('results/closed_form/test/corrosion_erf', '{}.png'.format(name[0]))
         activation = {}
         print("Generating Predictions for Image {}".format(name[0]))
 
@@ -207,39 +232,48 @@ def evaluate_generator(Features = False):
         # img.cpu().numpy()[0]
         img_path = osp.join(IMG_DIR, name[0]+'.png')
         # img_pil = Image.open(img_path)
-        # img_pil = img_pil.resize((513,513), Image.ANTIALIAS)
+        # img_pil = img_pil.resize((512,512), Image.ANTIALIAS)
         img_array = cv2.imread(img_path)
-        img_array = cv2.resize(img_array, (513,513), interpolation = cv2.INTER_AREA) 
+        img_array = cv2.resize(img_array, (512,512), interpolation = cv2.INTER_AREA) 
         img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
 
-        # generator.Up_conv4.register_forward_hook(get_activation('Up_conv4', activation)) # Up_conv2
-        # generator.Up_conv3.register_forward_hook(get_activation('Up_conv3', activation)) 
-        # generator.Up_conv2.register_forward_hook(get_activation('Up_conv2', activation))
         out_pred_map = generator(img)
         print(out_pred_map.size())
         solution = out_pred_map[0][0].detach().cpu().numpy().reshape(-1, 1)
+        solution = solution.reshape(512,256)
 
-        solution = solution.reshape(513,513)
-        sns.heatmap(solution, yticklabels=False, xticklabels=False)
-        plt.savefig("hm_bio_mobilenet.png")
-        input('s')
-
+        # solution = cv2.resize(solution, (512, 512), interpolation = cv2.INTER_CUBIC)
+        # sns.heatmap(solution, yticklabels=False, xticklabels=False)
+        # plt.savefig("corrosion_erf.png")
+        # input('s')
 
         # print(out_pred_map.max(), out_pred_map.min())
         # out_pred_np = out_pred_map[0].detach().cpu().numpy()
         alpha = np.minimum(np.maximum(solution, 0), 1)
+        alpha = cv2.resize(alpha, (512, 512), interpolation = cv2.INTER_CUBIC)
         # alpha = (out_pred_np - out_pred_np.min()) / (out_pred_np.max() - out_pred_np.min()) 
         # print(alpha.shape, np.unique(alpha))
         cv2.imwrite(filename[0:-4]+"_alpha.png", alpha*255)
+
+        # create vis
+        # vis = np.zeros((img_array.shape[0], img_array.shape[1], 3)).astype(np.uint8)
+        # vis[:,:,-1] = 255
+
         alpha = 1 - alpha
+        # vis_seg(img, seg, palette, alpha)
+        # out = Image.fromarray(vis_seg(img_array, alpha, palette, alpha))
+        # cv2.imwrite(filename[0:-4]+".png", out)
+
+        
         output = (alpha * 255.0).astype(np.uint8)
         # output_pil = Image.fromarray(output)
         b_channel, g_channel, r_channel = cv2.split(img_array)
+        print(b_channel.shape, g_channel.shape, r_channel.shape, output.shape)
         img_BGRA = cv2.merge((r_channel, g_channel, b_channel, output))
-        # output = addTransparency(img_pil, output_pil)
-        # img_pil.putalpha(output)
-        # img_pil.save(filename)
-        cv2.imwrite(filename, img_BGRA)
+        # img_BGRA = cv2.addWeighted(img_array,0.4,foreground,0.1,0)
+        print(img_BGRA.shape)
+        cv2.imwrite(filename[0:-4]+".png", img_BGRA)
+        
         print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         # input('s')
 
