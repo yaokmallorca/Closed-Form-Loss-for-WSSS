@@ -31,3 +31,19 @@ CityScapes example
     </tr>
 </table>
 
+VOC example
+<table>
+  <tr>
+    <td> <img src="https://github.com/yaokmallorca/Closed-Form-Loss-for-WSSS/blob/master/imgs/results_voc_2007_000129.png" width=200 height=120 ></td>
+    <td><img src="https://github.com/yaokmallorca/Closed-Form-Loss-for-WSSS/blob/master/imgs/results_voc_2007_000129_scr.png" width=200 height=120></td>
+    <td><img src="https://github.com/yaokmallorca/Closed-Form-Loss-for-WSSS/blob/master/imgs/results_voc_2007_000129_alpha_bike.png" width=200 height=120></td>
+    <td><img src="https://github.com/yaokmallorca/Closed-Form-Loss-for-WSSS/blob/master/imgs/results_voc_2007_000129_alpha_person.png" width=200 height=120></td>
+   </tr>
+  <tr>
+    <td> <img src="https://github.com/yaokmallorca/Closed-Form-Loss-for-WSSS/blob/master/imgs/results_voc_2007_001763.png" width=200 height=120 ></td>
+    <td><img src="https://github.com/yaokmallorca/Closed-Form-Loss-for-WSSS/blob/master/imgs/results_voc_2007_001763_scr.png" width=200 height=120></td>
+    <td><img src="https://github.com/yaokmallorca/Closed-Form-Loss-for-WSSS/blob/master/imgs/results_voc_2007_001763_alpha_cat.png" width=200 height=120></td>
+    <td><img src="https://github.com/yaokmallorca/Closed-Form-Loss-for-WSSS/blob/master/imgs/results_voc_2007_001763_alpha_dog.png" width=200 height=120></td>
+   </tr>
+ 
+  </table>
