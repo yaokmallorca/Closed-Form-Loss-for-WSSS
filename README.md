@@ -47,5 +47,6 @@ VOC example
    </tr>
  
   </table>
-  
-#Closed Form Matting
+  ## Closed Form Matting
+  For a gray image, the gray-scale value ( ![](http://latex.codecogs.com/gif.latex?\\I_i)) of each pixel can be represented as,
+ 
